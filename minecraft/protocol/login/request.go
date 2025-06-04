@@ -32,11 +32,9 @@ const (
 	// AuthenticationTypeFull indicates the player is fully authenticated using their own token
 	// from Mojang’s authentication servers.
 	AuthenticationTypeFull = iota
-
 	// AuthenticationTypeGuest indicates the player is a guest and is using a token
 	// obtained by the host player.
 	AuthenticationTypeGuest
-
 	// AuthenticationTypeSelfSigned indicates the player is unauthenticated.
 	// This mode is typically used for local (LAN) scenarios.
 	AuthenticationTypeSelfSigned
