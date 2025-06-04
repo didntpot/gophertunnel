@@ -162,7 +162,7 @@ const (
 	SoundEventImitateEvocationIllager
 	SoundEventImitateGhast
 	SoundEventImitateHusk
-	SoundEventImitateIllusionIllager
+	_
 	SoundEventImitateMagmaCube
 	SoundEventImitatePolarBear
 	SoundEventImitateShulker
@@ -539,7 +539,35 @@ const (
 	SoundEventRecordPrecipice
 	SoundEventVaultRejectRewardedPlayer
 	SoundEventImitateDrowned
+	SoundEventImitateCreaking
 	SoundEventBundleInsertFailed
+	SoundEventSpongeAbsorb
+	_
+	SoundEventCreakingHeartTrail
+	SoundEventCreakingHeartSpawn
+	SoundEventActivate
+	SoundEventDeactivate
+	SoundEventFreeze
+	SoundEventUnfreeze
+	SoundEventOpen
+	SoundEventOpenLong
+	SoundEventClose
+	SoundEventCloseLong
+	SoundEventImitatePhantom
+	SoundEventImitateZoglin
+	SoundEventImitateGuardian
+	SoundEventImitateRavager
+	SoundEventImitatePillager
+	SoundEventPlaceInWater
+	SoundEventStateChange
+	SoundEventImitateHappyGhast
+	SoundEventUnequipGeneric
+	SoundEventRecordTears
+	SoundEventTheEndLightFlash
+	SoundEventLeadLeash
+	SoundEventLeadUnleash
+	SoundEventLeadBreak
+	SoundEventUnsaddle
 )
 
 // LevelSoundEvent is sent by the server to make any kind of built-in sound heard to a player. It is sent to,

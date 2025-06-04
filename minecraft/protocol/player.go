@@ -41,6 +41,7 @@ const (
 	PlayerActionStopCrawling
 	PlayerActionStartFlying
 	PlayerActionStopFlying
+	// PlayerActionClientAckServerData is deprecated as of 1.21.90.
 	PlayerActionClientAckServerData
 	PlayerActionStartUsingItem
 )
@@ -111,12 +112,6 @@ func PlayerListRemoveEntry(r IO, x *PlayerListEntry) {
 // PlayerMovementSettings represents the different server authoritative movement settings. These control how
 // the client will provide input to the server.
 type PlayerMovementSettings struct {
-	// MovementType specifies the way the server handles player movement. Available options are
-	// protocol.PlayerMovementModeClient, protocol.PlayerMovementModeServer and
-	// protocol.PlayerMovementModeServerWithRewind, where the server authoritative types result
-	// in the client sending PlayerAuthInput packets instead of MovePlayer packets and the rewind mode
-	// requires sending the tick of movement and several actions.
-	MovementType int32
 	// RewindHistorySize is the amount of history to keep at maximum if MovementType is
 	// protocol.PlayerMovementModeServerWithRewind.
 	RewindHistorySize int32
@@ -129,10 +124,6 @@ type PlayerMovementSettings struct {
 
 // PlayerMoveSettings reads/writes PlayerMovementSettings x to/from IO r.
 func PlayerMoveSettings(r IO, x *PlayerMovementSettings) {
-	r.Varint32(&x.MovementType)
-	if x.MovementType == PlayerMovementModeClient {
-		r.InvalidValue(x.MovementType, "movement type", "movement type 0 is deprecated in 1.21.80")
-	}
 	r.Varint32(&x.RewindHistorySize)
 	r.Bool(&x.ServerAuthoritativeBlockBreaking)
 }

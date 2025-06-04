@@ -8,10 +8,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
 	"strings"
 	"time"
+
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 )
 
 // chain holds a chain with claims, each with their own headers, payloads and signatures. Each claim holds
@@ -25,6 +26,33 @@ type request struct {
 	Chain chain `json:"chain"`
 	// RawToken holds the raw token that follows the JWT chain, holding the ClientData.
 	RawToken string `json:"-"`
+}
+
+const (
+	// AuthenticationTypeFull indicates the player is fully authenticated using their own token
+	// from Mojang’s authentication servers.
+	AuthenticationTypeFull = iota
+
+	// AuthenticationTypeGuest indicates the player is a guest and is using a token
+	// obtained by the host player.
+	AuthenticationTypeGuest
+
+	// AuthenticationTypeSelfSigned indicates the player is unauthenticated.
+	// This mode is typically used for local (LAN) scenarios.
+	AuthenticationTypeSelfSigned
+)
+
+// authenticationInfo represents the client's authentication data exchanged during login.
+type authenticationInfo struct {
+	// AuthenticationType specifies the type of authentication the player is using. It is always one of the
+	// constants listed above.
+	AuthenticationType int `json:"AuthenticationType"`
+	// Certificate is the legacy client certificate chain, previously used in older Bedrock builds.
+	// Deprecated: This field is deprecated and will be omitted in future versions.
+	Certificate string `json:"Certificate,omitempty"`
+	// Token is a JSON Web Token (JWT) containing identity information about the player.
+	// It must be verified using Mojang’s public keys to ensure authenticity.
+	Token string `json:"Token"`
 }
 
 func init() {
@@ -217,20 +245,30 @@ func Encode(loginChain string, data ClientData, key *ecdsa.PrivateKey) []byte {
 	// just now it contains client data.
 	request.RawToken, _ = jwt.Signed(signer).Claims(data).Serialize()
 
-	return encodeRequest(request)
+	return encodeRequest(request, AuthenticationTypeFull)
 }
 
 // encodeRequest encodes the request passed to a byte slice which is suitable for setting to the Connection
 // Request field in a Login packet.
-func encodeRequest(req *request) []byte {
-	chainBytes, _ := json.Marshal(req)
+func encodeRequest(req *request, authenticationType int) []byte {
+	var info authenticationInfo
+	info.AuthenticationType = authenticationType
+
+	chainWrapper := map[string][]string{
+		"chain": req.Chain,
+	}
+	cert, _ := json.Marshal(chainWrapper)
+	info.Certificate = string(cert)
+
+	m, _ := json.Marshal(info)
 
 	buf := bytes.NewBuffer(nil)
-	_ = binary.Write(buf, binary.LittleEndian, int32(len(chainBytes)))
-	_, _ = buf.WriteString(string(chainBytes))
+	_ = binary.Write(buf, binary.LittleEndian, int32(len(m)))
+	_, _ = buf.Write(m)
 
-	_ = binary.Write(buf, binary.LittleEndian, int32(len(req.RawToken)))
-	_, _ = buf.WriteString(req.RawToken)
+	x := req.RawToken
+	_ = binary.Write(buf, binary.LittleEndian, int32(len(x)))
+	_, _ = buf.WriteString(x)
 	return buf.Bytes()
 }
 
@@ -259,7 +297,7 @@ func EncodeOffline(identityData IdentityData, data ClientData, key *ecdsa.Privat
 	// just now it contains client data.
 	request.RawToken, _ = jwt.Signed(signer).Claims(data).Serialize()
 
-	return encodeRequest(request)
+	return encodeRequest(request, AuthenticationTypeSelfSigned)
 }
 
 // decodeChain reads a certificate chain from the buffer passed and returns each claim found in the chain.
@@ -273,8 +311,13 @@ func decodeChain(buf *bytes.Buffer) (chain, error) {
 	}
 	chainData := buf.Next(int(chainLength))
 
+	var info authenticationInfo
+	if err := json.Unmarshal(chainData, &info); err != nil {
+		return nil, fmt.Errorf("decode chain JSON: %w", err)
+	}
+
 	request := &request{}
-	if err := json.Unmarshal(chainData, request); err != nil {
+	if err := json.Unmarshal([]byte(info.Certificate), request); err != nil {
 		return nil, fmt.Errorf("decode chain JSON: %w", err)
 	}
 	// First check if the chain actually has any elements in it.

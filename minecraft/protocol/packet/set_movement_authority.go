@@ -5,6 +5,8 @@ import (
 )
 
 // SetMovementAuthority is sent by the server to the client to change its movement mode.
+//
+// Deprecated: This packet is deprecated as of 1.21.90.
 type SetMovementAuthority struct {
 	// MovementType specifies the way the server handles player movement. Available options are
 	// protocol.PlayerMovementModeClient, protocol.PlayerMovementModeServer and

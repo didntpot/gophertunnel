@@ -228,4 +228,5 @@ const (
 	IDPlayerUpdateEntityOverrides
 	IDPlayerLocation
 	IDClientBoundControlSchemeSet
+	IDDebugShapesUpdate
 )
