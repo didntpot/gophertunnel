@@ -2,17 +2,25 @@ package login
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
+	"crypto/md5"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/google/uuid"
+)
+
+const (
+	AuthTypeFull = iota
+	AuthTypeGuest
+	AuthTypeSelfSigned
 )
 
 // chain holds a chain with claims, each with their own headers, payloads and signatures. Each claim holds
@@ -58,18 +66,6 @@ func (r *request) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func init() {
-	//noinspection SpellCheckingInspection
-	const mojangPublicKey = `MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAECRXueJeTDqNRRgJi/vlRufByu/2G0i2Ebt6YMar5QX/R0DIIyrJMcUpruK4QveTfJSTp3Shlq4Gk34cD/4GUWwkv0DVuzeuB+tXija7HBxii03NHDbPAD0AKnLr2wdAp`
-
-	data, _ := base64.StdEncoding.DecodeString(mojangPublicKey)
-	publicKey, _ := x509.ParsePKIXPublicKey(data)
-	mojangKey = publicKey.(*ecdsa.PublicKey)
-}
-
-// mojangKey holds the parsed Mojang ecdsa.PublicKey.
-var mojangKey = new(ecdsa.PublicKey)
-
 // AuthResult is returned by a call to Parse. It holds the ecdsa.PublicKey of the client and a bool that
 // indicates if the player was logged in with XBOX Live.
 type AuthResult struct {
@@ -83,137 +79,55 @@ type AuthResult struct {
 // Parse returns IdentityData and ClientData, of which IdentityData cannot under any circumstance be edited by
 // the client. Rather, it is obtained from an authentication endpoint. The ClientData can, however, be edited
 // freely by the client.
-func Parse(request []byte) (IdentityData, ClientData, AuthResult, error) {
+func Parse(requestData []byte) (IdentityData, ClientData, AuthResult, error) {
 	var (
 		iData IdentityData
 		cData ClientData
 		res   AuthResult
-		key   = &ecdsa.PublicKey{}
 	)
-	req, err := parseLoginRequest(request)
+	authInfoJSON, clientDataJWT, err := readConnectionRequest(bytes.NewBuffer(requestData))
 	if err != nil {
-		return iData, cData, res, fmt.Errorf("parse login request: %w", err)
-	}
-	tok, err := jwt.ParseSigned(req.Certificate.Chain[0], []jose.SignatureAlgorithm{jose.ES384})
-	if err != nil {
-		return iData, cData, res, fmt.Errorf("parse token 0: %w", err)
+		return iData, cData, res, err
 	}
 
-	// The first token holds the client's public key in the x5u (it's self signed).
-	//lint:ignore S1005 Double assignment is done explicitly to prevent panics.
-	raw, _ := tok.Headers[0].ExtraHeaders["x5u"]
-	if err := parseAsKey(raw, key); err != nil {
-		return iData, cData, res, fmt.Errorf("parse x5u: %w", err)
+	var info struct {
+		AuthenticationType int    `json:"AuthenticationType"`
+		Certificate        string `json:"Certificate"`
+		Token              string `json:"Token"`
+	}
+	if err = json.Unmarshal(authInfoJSON, &info); err != nil {
+		return iData, cData, res, fmt.Errorf("decode auth info: %w", err)
 	}
 
-	var identityClaims identityClaims
-	var authenticated bool
-	t, iss := time.Now(), "Mojang"
-
-	switch len(req.Certificate.Chain) {
-	case 1:
-		// Player was not authenticated with XBOX Live, meaning the one token in here is self-signed.
-		if err := parseFullClaim(req.Certificate.Chain[0], key, &identityClaims); err != nil {
-			return iData, cData, res, err
-		}
-		if err := identityClaims.Validate(jwt.Expected{Time: t}); err != nil {
-			return iData, cData, res, fmt.Errorf("validate token 0: %w", err)
-		}
-	case 3:
-		// Player was (or should be) authenticated with XBOX Live, meaning the chain is exactly 3 tokens
-		// long.
-		var c jwt.Claims
-		if err := parseFullClaim(req.Certificate.Chain[0], key, &c); err != nil {
-			return iData, cData, res, fmt.Errorf("parse token 0: %w", err)
-		}
-		if err := c.Validate(jwt.Expected{Time: t}); err != nil {
-			return iData, cData, res, fmt.Errorf("validate token 0: %w", err)
-		}
-		authenticated = bytes.Equal(key.X.Bytes(), mojangKey.X.Bytes()) && bytes.Equal(key.Y.Bytes(), mojangKey.Y.Bytes())
-
-		if err := parseFullClaim(req.Certificate.Chain[1], key, &c); err != nil {
-			return iData, cData, res, fmt.Errorf("parse token 1: %w", err)
-		}
-		if err := c.Validate(jwt.Expected{Time: t, Issuer: iss}); err != nil {
-			return iData, cData, res, fmt.Errorf("validate token 1: %w", err)
-		}
-		if err := parseFullClaim(req.Certificate.Chain[2], key, &identityClaims); err != nil {
-			return iData, cData, res, fmt.Errorf("parse token 2: %w", err)
-		}
-		if err := identityClaims.Validate(jwt.Expected{Time: t, Issuer: iss}); err != nil {
-			return iData, cData, res, fmt.Errorf("validate token 2: %w", err)
-		}
-		if authenticated != (identityClaims.ExtraData.XUID != "") {
-			return iData, cData, res, fmt.Errorf("identity data must have an XUID when logged into XBOX Live only")
-		}
+	switch info.AuthenticationType {
+	case AuthTypeFull:
+		return parseFullAuth(info.Token, string(clientDataJWT))
+	case AuthTypeSelfSigned:
+		return parseSelfSignedAuth(info.Certificate, string(clientDataJWT))
 	default:
-		return iData, cData, res, fmt.Errorf("unexpected login chain length %v", len(req.Certificate.Chain))
+		return iData, cData, res, fmt.Errorf("unsupported authentication type: %d", info.AuthenticationType)
 	}
-	if err := parseFullClaim(req.RawToken, key, &cData); err != nil {
-		return iData, cData, res, fmt.Errorf("parse client data: %w", err)
-	}
-	if strings.Count(cData.ServerAddress, ":") > 1 && cData.ServerAddress[0] != '[' {
-		// IPv6: We can't net.ResolveUDPAddr this directly, because Mojang does
-		// not always put [] around the IP if it isn't added by the player in
-		// the External Server adding screen. We'll have to do this manually:
-		ind := strings.LastIndex(cData.ServerAddress, ":")
-		cData.ServerAddress = "[" + cData.ServerAddress[:ind] + "]" + cData.ServerAddress[ind:]
-	}
-	if err := cData.Validate(); err != nil {
-		return iData, cData, res, fmt.Errorf("validate client data: %w", err)
-	}
-	return identityClaims.ExtraData, cData, AuthResult{PublicKey: key, XBOXLiveAuthenticated: authenticated}, nil
 }
 
-// parseLoginRequest parses the structure of a login request from the data passed and returns it.
-func parseLoginRequest(requestData []byte) (*request, error) {
-	buf := bytes.NewBuffer(requestData)
-	chain, err := decodeChain(buf)
-	if err != nil {
-		return nil, err
+// readConnectionRequest extracts the auth info JSON and client data JWT slices from the login connection request buffer.
+func readConnectionRequest(buf *bytes.Buffer) ([]byte, []byte, error) {
+	var authLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &authLen); err != nil {
+		return nil, nil, fmt.Errorf("read auth info length: %w", err)
 	}
-	if len(chain) < 1 {
-		return nil, fmt.Errorf("JWT chain must be at least 1 token long")
+	authInfoJSON := buf.Next(int(authLen))
+	if len(authInfoJSON) != int(authLen) {
+		return nil, nil, fmt.Errorf("auth info truncated: expected %d bytes, got %d", authLen, len(authInfoJSON))
 	}
-	var rawLength int32
-	if err := binary.Read(buf, binary.LittleEndian, &rawLength); err != nil {
-		return nil, fmt.Errorf("read raw token length: %w", err)
+	var clientLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &clientLen); err != nil {
+		return nil, nil, fmt.Errorf("read client data length: %w", err)
 	}
-	return &request{
-		Certificate: certificate{Chain: chain},
-		RawToken:    string(buf.Next(int(rawLength))),
-	}, nil
-}
-
-// parseFullClaim parses and verifies a full claim using the ecdsa.PublicKey passed. The key passed is updated
-// if the claim holds an identityPublicKey field.
-// The value v passed is decoded into when reading the claims.
-func parseFullClaim(claim string, key *ecdsa.PublicKey, v any) error {
-	tok, err := jwt.ParseSigned(claim, []jose.SignatureAlgorithm{jose.ES384})
-	if err != nil {
-		return fmt.Errorf("error parsing signed token: %w", err)
+	clientDataJWT := buf.Next(int(clientLen))
+	if len(clientDataJWT) != int(clientLen) {
+		return nil, nil, fmt.Errorf("client data truncated: expected %d bytes, got %d", clientLen, len(clientDataJWT))
 	}
-	var m map[string]any
-	if err := tok.Claims(key, v, &m); err != nil {
-		return fmt.Errorf("error verifying claims of token: %w", err)
-	}
-	newKey, present := m["identityPublicKey"]
-	if present {
-		if err := parseAsKey(newKey, key); err != nil {
-			return fmt.Errorf("error parsing identity public key: %w", err)
-		}
-	}
-	return nil
-}
-
-// parseAsKey parses the base64 encoded ecdsa.PublicKey held in k as a public key and sets it to the variable
-// pub passed.
-func parseAsKey(k any, pub *ecdsa.PublicKey) error {
-	kStr, _ := k.(string)
-	if err := ParsePublicKey(kStr, pub); err != nil {
-		return fmt.Errorf("error parsing public key: %w", err)
-	}
-	return nil
+	return authInfoJSON, clientDataJWT, nil
 }
 
 // Encode encodes a login request using the encoded login chain passed and the client data. The request's
@@ -250,7 +164,8 @@ func Encode(loginChain string, data ClientData, key *ecdsa.PrivateKey, legacy bo
 			// We add our own claim at the start of the chain.
 			Chain: append(chain{firstJWT}, cert.Chain...),
 		},
-		Legacy: legacy,
+		AuthenticationType: AuthTypeFull,
+		Legacy:             legacy,
 	}
 	// We create another token this time, which is signed the same as the claim we just inserted in the chain,
 	// just now it contains client data.
@@ -297,7 +212,7 @@ func EncodeOffline(identityData IdentityData, data ClientData, key *ecdsa.Privat
 		Certificate: certificate{
 			Chain: chain{firstJWT},
 		},
-		AuthenticationType: 2,
+		AuthenticationType: AuthTypeSelfSigned,
 		Legacy:             legacy,
 	}
 	// We create another token this time, which is signed the same as the claim we just inserted in the chain,
@@ -305,47 +220,6 @@ func EncodeOffline(identityData IdentityData, data ClientData, key *ecdsa.Privat
 	req.RawToken, _ = jwt.Signed(signer).Claims(data).Serialize()
 
 	return encodeRequest(req)
-}
-
-// decodeChain reads a certificate chain from the buffer passed and returns each claim found in the chain.
-func decodeChain(buf *bytes.Buffer) (chain, error) {
-	var chainLength int32
-	if err := binary.Read(buf, binary.LittleEndian, &chainLength); err != nil {
-		return nil, fmt.Errorf("read chain length: %w", err)
-	}
-	if chainLength <= 0 {
-		return nil, fmt.Errorf("invalid chain length: %d", chainLength)
-	}
-	chainData := buf.Next(int(chainLength))
-
-	req := struct {
-		AuthenticationType uint8  `json:"AuthenticationType"`
-		Certificate        string `json:"Certificate"`
-		Chain              chain  `json:"chain"`
-	}{}
-	if err := json.Unmarshal(chainData, &req); err != nil {
-		return nil, fmt.Errorf("decode chain JSON: %w", err)
-	}
-
-	var ch chain
-	if req.Certificate != "" {
-		cert := &certificate{}
-		_ = json.Unmarshal([]byte(req.Certificate), &cert)
-		ch = cert.Chain
-	} else {
-		ch = req.Chain
-	}
-
-	// First check if the chain actually has any elements in it.
-	if len(ch) == 0 {
-		return nil, fmt.Errorf("decode chain: no elements")
-	}
-
-	// Then check if the authentication type is guest mode.
-	if req.AuthenticationType == 1 {
-		return nil, fmt.Errorf("guest authentication is not supported")
-	}
-	return ch, nil
 }
 
 // identityClaims holds the claims for the last token in the chain, which contains the IdentityData of the
@@ -400,4 +274,196 @@ func ParsePublicKey(b64Data string, key *ecdsa.PublicKey) error {
 func MarshalPublicKey(key *ecdsa.PublicKey) string {
 	data, _ := x509.MarshalPKIXPublicKey(key)
 	return base64.StdEncoding.EncodeToString(data)
+}
+
+type xboxAuthJwtBody struct {
+	Ipt   string `json:"ipt"`
+	Pfcd  int64  `json:"pfcd"`
+	Tid   string `json:"tid"`
+	Mid   string `json:"mid"`
+	Xid   string `json:"xid"`
+	Xname string `json:"xname"`
+	Cpk   string `json:"cpk"`
+
+	Pid   string `json:"pid"`
+	Pname string `json:"pname"`
+
+	Iss string `json:"iss"`
+	Sub string `json:"sub"`
+	Aud any    `json:"aud"`
+	Exp int64  `json:"exp"`
+	Nbf int64  `json:"nbf"`
+	Iat int64  `json:"iat"`
+	Jti string `json:"jti"`
+}
+
+func parseFullAuth(openIDToken string, clientJWT string) (IdentityData, ClientData, AuthResult, error) {
+	var zeroID IdentityData
+	var zeroCD ClientData
+	var zeroRes AuthResult
+
+	headerJSON, _, err := decodeJWTParts(openIDToken)
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, err
+	}
+	var hdr struct {
+		Alg string `json:"alg"`
+		Kid string `json:"kid"`
+		Typ string `json:"typ"`
+	}
+	if err = json.Unmarshal(headerJSON, &hdr); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("parse OpenID header: %w", err)
+	}
+
+	issuer, signingKeyDER, err := defaultAuthKeyProvider.GetKey(context.Background(), hdr.Kid)
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("fetch authentication key: %w", err)
+	}
+
+	body, err := validateOpenIDToken(openIDToken, signingKeyDER, issuer, time.Now())
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("validate OpenID token: %w", err)
+	}
+
+	clientKeyDER, err := decodeBase64URL(body.Cpk)
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("decode client key: %w", err)
+	}
+
+	var clientData ClientData
+	if _, err = validateSelfSignedClaims(clientJWT, clientKeyDER, &clientData); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("validate client data JWT: %w", err)
+	}
+	if err = clientData.Validate(); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("validate client data: %w", err)
+	}
+
+	legacyUUID := calculateUUIDFromXUID(body.Xid)
+	idData := IdentityData{
+		XUID:        body.Xid,
+		Identity:    legacyUUID.String(),
+		DisplayName: body.Xname,
+	}
+	if err = idData.Validate(); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("validate identity: %w", err)
+	}
+
+	pubAny, err := parseDERPublicKey(clientKeyDER)
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, err
+	}
+	pub, ok := pubAny.(*ecdsa.PublicKey)
+	if !ok {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("expected ECDSA client key")
+	}
+
+	return idData, clientData, AuthResult{PublicKey: pub, XBOXLiveAuthenticated: true}, nil
+}
+
+func parseSelfSignedAuth(cert string, clientJWT string) (IdentityData, ClientData, AuthResult, error) {
+	var zeroID IdentityData
+	var zeroCD ClientData
+	var zeroRes AuthResult
+
+	var chain struct {
+		Chain []string `json:"chain"`
+	}
+	if err := json.Unmarshal([]byte(cert), &chain); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("parse self-signed certificate: %w", err)
+	}
+	if len(chain.Chain) != 1 {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("expected exactly one certificate in self-signed chain, got %d", len(chain.Chain))
+	}
+
+	identityData, err := parseLegacyIdentity(chain.Chain[0])
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, err
+	}
+	if err = identityData.Validate(); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("validate identity: %w", err)
+	}
+
+	clientKeyDER, authenticated, err := validateLegacyChain(chain.Chain, nil, time.Now())
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, err
+	}
+	var clientData ClientData
+	if _, err = validateSelfSignedClaims(clientJWT, clientKeyDER, &clientData); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("validate client data JWT: %w", err)
+	}
+	if err = clientData.Validate(); err != nil {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("validate client data: %w", err)
+	}
+
+	pubAny, err := parseDERPublicKey(clientKeyDER)
+	if err != nil {
+		return zeroID, zeroCD, zeroRes, err
+	}
+	pub, ok := pubAny.(*ecdsa.PublicKey)
+	if !ok {
+		return zeroID, zeroCD, zeroRes, fmt.Errorf("expected ECDSA client key")
+	}
+
+	return identityData, clientData, AuthResult{PublicKey: pub, XBOXLiveAuthenticated: authenticated}, nil
+}
+
+func parseLegacyIdentity(token string) (IdentityData, error) {
+	_, payload, err := decodeJWTParts(token)
+	if err != nil {
+		return IdentityData{}, err
+	}
+	var raw map[string]json.RawMessage
+	if err = json.Unmarshal(payload, &raw); err != nil {
+		return IdentityData{}, fmt.Errorf("parse legacy payload: %w", err)
+	}
+	extra, ok := raw["extraData"]
+	if !ok {
+		return IdentityData{}, fmt.Errorf("missing extraData in self-signed certificate")
+	}
+	var identity IdentityData
+	if err = json.Unmarshal(extra, &identity); err != nil {
+		return IdentityData{}, fmt.Errorf("decode extraData: %w", err)
+	}
+	return identity, nil
+}
+
+func validateLegacyChain(chain []string, rootAuthKeyDER []byte, now time.Time) ([]byte, bool, error) {
+	identityKey := rootAuthKeyDER
+	authenticated := false
+
+	for idx, jwtString := range chain {
+		var claims struct {
+			IdentityPublicKey string `json:"identityPublicKey"`
+			Exp               int64  `json:"exp"`
+			Nbf               int64  `json:"nbf"`
+		}
+		if _, err := validateSelfSignedClaims(jwtString, identityKey, &claims); err != nil {
+			return nil, false, fmt.Errorf("validate chain link %d: %w", idx, err)
+		}
+		if err := checkExpiry(claims.Exp, claims.Nbf, now); err != nil {
+			return nil, false, fmt.Errorf("chain link %d expired: %w", idx, err)
+		}
+		if len(rootAuthKeyDER) > 0 && bytes.Equal(identityKey, rootAuthKeyDER) {
+			authenticated = true
+		}
+		if claims.IdentityPublicKey == "" {
+			return nil, false, fmt.Errorf("missing identityPublicKey in chain link %d", idx)
+		}
+		nextKey, err := decodeBase64URL(claims.IdentityPublicKey)
+		if err != nil {
+			return nil, false, fmt.Errorf("invalid identityPublicKey in chain link %d: %w", idx, err)
+		}
+		identityKey = nextKey
+	}
+	if identityKey == nil {
+		return nil, false, fmt.Errorf("no authentication chain links provided")
+	}
+	return identityKey, authenticated, nil
+}
+
+func calculateUUIDFromXUID(xuid string) uuid.UUID {
+	hash := md5.Sum([]byte("pocket-auth-1-xuid:" + xuid))
+	hash[6] = (hash[6] & 0x0f) | 0x30
+	hash[8] = (hash[8] & 0x3f) | 0x80
+	return uuid.Must(uuid.FromBytes(hash[:]))
 }
