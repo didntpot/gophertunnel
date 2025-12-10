@@ -9,5 +9,5 @@ const (
 var textCategories = map[uint8][]string{
 	TextCategoryMessageOnly:           {"raw", "tip", "systemMessage", "textObjectWhisper", "textObjectAnnouncement", "textObject"},
 	TextCategoryAuthorizedMessage:     {"chat", "whisper", "announcement"},
-	TextCategoryMessageWithParameters: {"translation", "popup", "jukeboxPopup"},
+	TextCategoryMessageWithParameters: {"translate", "popup", "jukeboxPopup"},
 }
