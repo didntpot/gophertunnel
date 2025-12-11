@@ -71,5 +71,9 @@ func (pk *Text) Marshal(io protocol.IO) {
 	}
 	io.String(&pk.XUID)
 	io.String(&pk.PlatformChatID)
-	io.String(&pk.FilteredMessage)
+	hasFiltered := pk.FilteredMessage != ""
+	io.Bool(&hasFiltered)
+	if hasFiltered {
+		io.String(&pk.FilteredMessage)
+	}
 }

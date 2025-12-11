@@ -33,8 +33,8 @@ type CommandOutput struct {
 	// OutputMessages is a list of all output messages that should be sent to the player. Whether they are
 	// shown or not, depends on the type of the messages.
 	OutputMessages []protocol.CommandOutputMessage
-	// DataSet ... TODO: Find out what this is for.
-	DataSet string
+	// Data is a string of data that is sent along with the command output.
+	Data string
 }
 
 // ID ...
@@ -47,7 +47,9 @@ func (pk *CommandOutput) Marshal(io protocol.IO) {
 	io.Uint8(&pk.OutputType)
 	io.Varuint32(&pk.SuccessCount)
 	protocol.Slice(io, &pk.OutputMessages)
-	if pk.OutputType == CommandOutputTypeDataSet {
-		io.String(&pk.DataSet)
+	hasData := pk.Data != ""
+	io.Bool(&hasData)
+	if hasData {
+		io.String(&pk.Data)
 	}
 }

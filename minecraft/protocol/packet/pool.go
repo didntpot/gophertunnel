@@ -270,6 +270,7 @@ func init() {
 		IDDebugDrawer:                  func() Packet { return &DebugDrawer{} },
 		IDServerBoundPackSettingChange: func() Packet { return &ServerBoundPackSettingChange{} },
 		IDGraphicsOverrideParameter:    func() Packet { return &GraphicsOverrideParameter{} },
+		IDClientBoundDataStore:         func() Packet { return &ClientBoundDataStore{} },
 	}
 	for id, pk := range serverOriginating {
 		RegisterPacketFromServer(id, pk)
@@ -358,6 +359,7 @@ func init() {
 		IDClientCameraAimAssist:           func() Packet { return &ClientCameraAimAssist{} },
 		IDUpdateClientOptions:             func() Packet { return &UpdateClientOptions{} },
 		IDServerBoundPackSettingChange:    func() Packet { return &ServerBoundPackSettingChange{} },
+		IDServerBoundDataStore:            func() Packet { return &ServerBoundDataStore{} },
 	}
 	for id, pk := range clientOriginating {
 		RegisterPacketFromClient(id, pk)

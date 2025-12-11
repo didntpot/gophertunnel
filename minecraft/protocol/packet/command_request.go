@@ -31,4 +31,6 @@ func (pk *CommandRequest) Marshal(io protocol.IO) {
 	protocol.CommandOriginData(io, &pk.CommandOrigin)
 	io.Bool(&pk.Internal)
 	io.Varint32(&pk.Version)
+	version := "latest"
+	io.String(&version)
 }

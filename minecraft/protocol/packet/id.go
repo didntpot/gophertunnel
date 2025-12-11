@@ -232,4 +232,7 @@ const (
 	IDServerBoundPackSettingChange
 	_
 	IDGraphicsOverrideParameter
+	IDClientBoundDataStore
+	_
+	IDServerBoundDataStore
 )

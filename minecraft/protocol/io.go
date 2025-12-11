@@ -1,10 +1,11 @@
 package protocol
 
 import (
+	"image/color"
+
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/google/uuid"
 	"github.com/sandertv/gophertunnel/minecraft/nbt"
-	"image/color"
 )
 
 // IO represents a packet IO direction. Implementations of this interface are Reader and Writer. Reader reads
@@ -19,6 +20,7 @@ type IO interface {
 	Uint64(x *uint64)
 	Int64(x *int64)
 	Float32(x *float32)
+	Float64(x *float64)
 	Uint8(x *uint8)
 	Int8(x *int8)
 	Bool(x *bool)
@@ -59,6 +61,7 @@ type IO interface {
 	GameRule(x *GameRule)
 	GameRuleLegacy(x *GameRule)
 	AbilityValue(x *any)
+	DataStoreValue(x *any)
 	Bitset(x *Bitset, size int)
 	PackSetting(x *PackSetting)
 	ShapeData(x *ShapeData)

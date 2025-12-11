@@ -3,15 +3,16 @@ package protocol
 import (
 	"bytes"
 	"fmt"
-	"github.com/go-gl/mathgl/mgl32"
-	"github.com/google/uuid"
-	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"image/color"
 	"io"
 	"math/big"
 	"reflect"
 	"sort"
 	"unsafe"
+
+	"github.com/go-gl/mathgl/mgl32"
+	"github.com/google/uuid"
+	"github.com/sandertv/gophertunnel/minecraft/nbt"
 )
 
 // Writer implements writing methods for data types from Minecraft packets. Each Packet implementation has one
@@ -470,6 +471,26 @@ func (w *Writer) AbilityValue(x *any) {
 		w.Float32(&val)
 	default:
 		w.InvalidValue(*x, "ability value type", "must be bool or float32")
+	}
+}
+
+// DataStoreValue writes a data store value to the writer.
+func (w *Writer) DataStoreValue(x *any) {
+	switch val := (*x).(type) {
+	case float64:
+		valType := uint32(DataStoreValueTypeDouble)
+		w.Varuint32(&valType)
+		w.Float64(&val)
+	case bool:
+		valType := uint32(DataStoreValueTypeBool)
+		w.Varuint32(&valType)
+		w.Bool(&val)
+	case string:
+		valType := uint32(DataStoreValueTypeString)
+		w.Varuint32(&valType)
+		w.String(&val)
+	default:
+		w.UnknownEnumOption(x, "data store value")
 	}
 }
 

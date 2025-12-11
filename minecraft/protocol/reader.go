@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/go-gl/mathgl/mgl32"
-	"github.com/google/uuid"
-	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"image/color"
 	"io"
 	"math"
 	"math/big"
 	"math/bits"
 	"unsafe"
+
+	"github.com/go-gl/mathgl/mgl32"
+	"github.com/google/uuid"
+	"github.com/sandertv/gophertunnel/minecraft/nbt"
 )
 
 // Reader implements reading operations for reading types from Minecraft packets. Each Packet implementation
@@ -584,6 +585,28 @@ func (r *Reader) AbilityValue(x *any) {
 		*x = floatVal
 	default:
 		r.InvalidValue(valType, "ability value type", "must be bool or float32")
+	}
+}
+
+// DataStoreValue reads a data store value from the Reader.
+func (r *Reader) DataStoreValue(x *any) {
+	var valueType uint32
+	r.Varuint32(&valueType)
+	switch valueType {
+	case DataStoreValueTypeDouble:
+		var v float64
+		r.Float64(&v)
+		*x = v
+	case DataStoreValueTypeBool:
+		var v bool
+		r.Bool(&v)
+		*x = v
+	case DataStoreValueTypeString:
+		var v string
+		r.String(&v)
+		*x = v
+	default:
+		r.UnknownEnumOption(valueType, "data store value type")
 	}
 }
 

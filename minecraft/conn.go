@@ -931,22 +931,9 @@ func (conn *Conn) handleResourcePacksInfo(pk *packet.ResourcePacksInfo) error {
 func (conn *Conn) handleResourcePackStack(pk *packet.ResourcePackStack) error {
 	// We currently don't apply resource packs in any way, so instead we just check if all resource packs in
 	// the stacks are also downloaded.
-	for _, pack := range pk.TexturePacks {
-		for i, behaviourPack := range pk.BehaviourPacks {
-			if pack.UUID == behaviourPack.UUID {
-				// We had a behaviour pack with the same UUID as the texture pack, so we drop the behaviour
-				// pack and log it.
-				conn.log.Warn("handle ResourcePackStack: dropping behaviour pack due to a texture pack with the same UUID", "UUID", pack.UUID)
-				pk.BehaviourPacks = append(pk.BehaviourPacks[:i], pk.BehaviourPacks[i+1:]...)
-			}
-		}
-		if !conn.hasPack(pack.UUID, pack.Version, false) {
-			return fmt.Errorf("texture pack (UUID=%v, version=%v) not downloaded", pack.UUID, pack.Version)
-		}
-	}
-	for _, pack := range pk.BehaviourPacks {
-		if !conn.hasPack(pack.UUID, pack.Version, true) {
-			return fmt.Errorf("behaviour pack (UUID=%v, version=%v) not downloaded", pack.UUID, pack.Version)
+	for _, pack := range pk.ResourcePacks {
+		if !conn.hasPack(pack.UUID, pack.Version) {
+			return fmt.Errorf("resource pack (UUID=%v, version=%v) not downloaded", pack.UUID, pack.Version)
 		}
 	}
 	conn.expect(packet.IDStartGame)
@@ -954,9 +941,8 @@ func (conn *Conn) handleResourcePackStack(pk *packet.ResourcePackStack) error {
 	return nil
 }
 
-// hasPack checks if the connection has a resource pack downloaded with the UUID and version passed, provided
-// the pack either has or does not have behaviours in it.
-func (conn *Conn) hasPack(uuid string, version string, hasBehaviours bool) bool {
+// hasPack checks if the connection has a resource pack downloaded with the UUID and version passed.
+func (conn *Conn) hasPack(uuid string, version string) bool {
 	for _, exempted := range exemptedPacks {
 		if exempted.uuid == uuid && exempted.version == version {
 			// The server may send this resource pack on the stack without sending it in the info, as the client
@@ -973,7 +959,7 @@ func (conn *Conn) hasPack(uuid string, version string, hasBehaviours bool) bool 
 		}
 	}
 	for _, pack := range conn.resourcePacks {
-		if pack.UUID().String() == uuid && pack.Version() == version && pack.HasBehaviours() == hasBehaviours {
+		if pack.UUID().String() == uuid && pack.Version() == version {
 			return true
 		}
 	}
@@ -1006,16 +992,10 @@ func (conn *Conn) handleResourcePackClientResponse(pk *packet.ResourcePackClient
 		pk := &packet.ResourcePackStack{BaseGameVersion: protocol.CurrentVersion, Experiments: []protocol.ExperimentData{{Name: "cameras", Enabled: true}}}
 		for _, pack := range conn.resourcePacks {
 			resourcePack := protocol.StackResourcePack{UUID: pack.UUID().String(), Version: pack.Version()}
-			// If it has behaviours, add it to the behaviour pack list. If not, we add it to the texture packs
-			// list.
-			if pack.HasBehaviours() {
-				pk.BehaviourPacks = append(pk.BehaviourPacks, resourcePack)
-				continue
-			}
-			pk.TexturePacks = append(pk.TexturePacks, resourcePack)
+			pk.ResourcePacks = append(pk.ResourcePacks, resourcePack)
 		}
 		for _, exempted := range exemptedPacks {
-			pk.TexturePacks = append(pk.TexturePacks, protocol.StackResourcePack{
+			pk.ResourcePacks = append(pk.ResourcePacks, protocol.StackResourcePack{
 				UUID:    exempted.uuid,
 				Version: exempted.version,
 			})

@@ -13,8 +13,20 @@ const (
 )
 
 const (
-    AnimateActionRowRight = iota + 128
-    AnimateActionRowLeft
+	AnimateActionRowRight = iota + 128
+	AnimateActionRowLeft
+)
+
+const (
+	SwingSourceNone      = "none"
+	SwingSourceBuild     = "build"
+	SwingSourceMine      = "mine"
+	SwingSourceInteract  = "interact"
+	SwingSourceAttack    = "attack"
+	SwingSourceUseItem   = "useitem"
+	SwingSourceThrowItem = "throwitem"
+	SwingSourceDropItem  = "dropitem"
+	SwingSourceEvent     = "event"
 )
 
 // Animate is sent by the server to send a player animation from one player to all viewers of that player. It
@@ -27,10 +39,11 @@ type Animate struct {
 	// ID is unique for each world session, and entities are generally identified in packets using this
 	// runtime ID.
 	EntityRuntimeID uint64
-	// Data ...
+	// Data is additional data for the animation.
 	Data float32
-	// RowingTime is the time for rowing actions.
-	RowingTime float32
+	// SwingSource indicates the source of the arm swing animation. It is one of the SwingSource* constants.
+	// This field is optional and is only present when not empty.
+	SwingSource string
 }
 
 // ID ...
@@ -39,10 +52,14 @@ func (*Animate) ID() uint32 {
 }
 
 func (pk *Animate) Marshal(io protocol.IO) {
-	io.Varint32(&pk.ActionType)
+	action := byte(pk.ActionType)
+	io.Uint8(&action)
+	pk.ActionType = int32(action)
 	io.Varuint64(&pk.EntityRuntimeID)
 	io.Float32(&pk.Data)
-	if pk.ActionType == AnimateActionRowLeft || pk.ActionType == AnimateActionRowRight {
-		io.Float32(&pk.RowingTime)
+	hasSwingSource := pk.SwingSource != "" && pk.SwingSource != SwingSourceNone
+	io.Bool(&hasSwingSource)
+	if hasSwingSource {
+		io.String(&pk.SwingSource)
 	}
 }
